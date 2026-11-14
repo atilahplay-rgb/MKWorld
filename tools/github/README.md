@@ -1,0 +1,17 @@
+# github
+
+Issue moderation, run by `.github/workflows/issues.yml` on each issue event, once a day and on each release.
+
+| File | Contents |
+|---|---|
+| `moderate.py` | Acts on an issue, a comment, a release or the daily sweep: release and GPU labels, empty reports closed, logs asked for, known errors answered, a log from a build with local changes (`-dirty`) noted, maintainers' replies closed. Prints what it would do unless `--apply` |
+| `classify.py` | Reads a report without GitHub: release, GPU, empty, log, known error, and what a maintainer's reply decides (tested in `tests/test_issues.py`) |
+| `signatures.toml` | Known error strings and the issue that tracks each; `fixed` keeps reports on that release or later open as possible regressions |
+
+A maintainer's reply closes its issue when it says "Fixed in vX" opening a sentence (or "is the same as #N, fixed in
+vX") with vX published, or "is the same as #N" (closed as its duplicate). "Fixed in" a release not yet out labels it
+`fixed-next-release`, closed when that release is published. A reply only settles an issue if no player wrote after
+it, and a closed issue is reopened when its author, or anyone attaching a log, says it still happens.
+
+Usage: `uv run tools/github/moderate.py backlog` (all open issues, dry run), `... issue N --apply`; from GitHub,
+`gh workflow run issues.yml -f task=backlog` (or `sweep`, `issue -f issue=N`; `-f dry_run=true` only prints).
