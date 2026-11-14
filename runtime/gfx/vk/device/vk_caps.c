@@ -128,6 +128,11 @@ void vk_caps_init(VkCtx *c) {
            depth_ok(p, VK_FORMAT_D32_SFLOAT_S8_UINT));
     rt_log("vk caps: gpl %s fast-link %s (graphicsPipelineLibrary %u%s)", vk_caps.gpl ? "yes" : "no",
            gpl_fast ? "yes" : "no", (unsigned)gpl_lib, gpl_lib && gpl_fast && !vk_caps.gpl ? ", off by MKW_GPL=0" : "");
+    // A measurement only (nothing is enabled): which GPUs could take a GPU-driven recording path. The replay records
+    // every draw on the CPU today (docs/roadmap.md 1); these three are what a move of that work to the GPU would use.
+    rt_log("vk caps: gpu-driven recording: device_generated_commands %d, descriptor_buffer %d, multi_draw %d",
+           has_ext(ep, ne, "VK_EXT_device_generated_commands"), has_ext(ep, ne, "VK_EXT_descriptor_buffer"),
+           has_ext(ep, ne, "VK_EXT_multi_draw"));
     rt_log("vk caps: fallbacks: float64 %s, storage buffers %s %u, subgroup pin %u on stages %#x, device subgroup %u",
            vk_caps.float64 ? "native" : "softfloat64", vk_caps.sbuf_align ? "rounded down to" : "exact, alignment",
            (unsigned)l->minStorageBufferOffsetAlignment, want, (unsigned)vk_caps.sg_pin_stages, sg.subgroupSize);
