@@ -188,6 +188,10 @@ typedef enum {
     // the setup's steps (tools/prepare/prepare.py STEPS), and the mark of one an earlier setup already did
     UI_LAUNCH_STEP_CHECK, UI_LAUNCH_STEP_EXEFS, UI_LAUNCH_STEP_ROMFS, UI_LAUNCH_STEP_GENERATE, UI_LAUNCH_STEP_COMPILE,
     UI_LAUNCH_STEP_SHADERS, UI_LAUNCH_STEP_WARM, UI_LAUNCH_STEP_CLEANUP, UI_LAUNCH_STEP_KEPT,
+    // the setup's progress card (launcher.cpp setup_card): STEP_N "%d ... %d" (the step under way, of how many),
+    // DONE_IN "%s" (a time: 12:34)
+    UI_LAUNCH_PREPARING, UI_LAUNCH_ELAPSED, UI_LAUNCH_REMAINING, UI_LAUNCH_ESTIMATING, UI_LAUNCH_STEP_N,
+    UI_LAUNCH_ETA_NOTE, UI_LAUNCH_DONE_IN,
     UI_LAUNCH_SHORTCUT, UI_LAUNCH_SHORTCUT_DONE, UI_LAUNCH_SHORTCUT_FAILED,   // DONE: "... %s" (the shortcut's path)
     // the Mods page (ui/launcher/mods.cpp): CONFIRM and CODE_BUILD take %s (the mod's name, the build id)
     UI_LAUNCH_MODS, UI_LAUNCH_MODS_EMPTY, UI_MOD_IMPORT_ZIP, UI_MOD_IMPORT_FOLDER, UI_MOD_NAME, UI_MOD_IMPORT,

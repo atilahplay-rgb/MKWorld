@@ -1867,6 +1867,38 @@ msgctxt "UI_LAUNCH_STEP_KEPT"
 msgid "kept"
 msgstr "zachowano"
 
+msgctxt "UI_LAUNCH_PREPARING"
+msgid "Setting up the game"
+msgstr ""
+
+msgctxt "UI_LAUNCH_ELAPSED"
+msgid "Elapsed"
+msgstr ""
+
+msgctxt "UI_LAUNCH_REMAINING"
+msgid "Remaining"
+msgstr ""
+
+msgctxt "UI_LAUNCH_ESTIMATING"
+msgid "estimating..."
+msgstr ""
+
+#. printf format: keep every %... conversion, in the same order. The step under way, and how many there are.
+msgctxt "UI_LAUNCH_STEP_N"
+msgid "Step %d of %d"
+msgstr ""
+
+msgctxt "UI_LAUNCH_ETA_NOTE"
+msgid ""
+"The time left is an estimate and gets better as the setup goes on. A + means the later steps are "
+"not counted yet: this setup is timing them for next time."
+msgstr ""
+
+#. printf format: keep every %... conversion, in the same order. %s: a time such as 12:34.
+msgctxt "UI_LAUNCH_DONE_IN"
+msgid "Finished in %s"
+msgstr ""
+
 msgctxt "UI_LAUNCH_SHORTCUT"
 msgid "Desktop shortcut"
 msgstr "Skrót na pulpicie"

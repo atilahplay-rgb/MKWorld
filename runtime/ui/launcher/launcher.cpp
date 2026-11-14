@@ -462,33 +462,144 @@ static void step_mark(ImDrawList *dl, ImVec2 c, float r, bool done, bool now) {
     dl->PathStroke(LOOK_ACCENT, 0, 2.6f * s);
 }
 
-// The setup's steps, one per line: its mark, its name and, for the one under way, a bar to the right edge with the
-// count after it (a band going along the bar while the step has no count yet).
-static void setup_progress(const SetupState &st) {
-    float s = L.scale, lh = ImGui::GetTextLineHeight(), row = lh + 14 * s, r = lh * 0.48f;
+// A time as 12:34, or 1:02:03 from an hour on: the same in every language.
+static void fmt_clock(long long ms, char *out, size_t cap) {
+    long long sec = (ms + 500) / 1000;
+    if (sec < 0) sec = 0;
+    if (sec >= 3600) snprintf(out, cap, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
+    else snprintf(out, cap, "%lld:%02lld", sec / 60, sec % 60);
+}
+
+// How far along the whole setup is, 0..1: the steps done, plus the share of the one under way that has a count.
+// It counts steps, not time: the compile alone is most of the clock, so the bar moves in jumps and the time left
+// (setup_card) is what says how long it will take.
+static float setup_fraction(const SetupState &st) {
+    float n = 0;
+    for (int i = 0; i < SETUP_STEPS; i++)
+        if (st.done[i]) n += 1;
+    if (st.running && st.step >= 0 && !st.done[st.step] && st.total > 0)
+        n += fminf(1.0f, fmaxf(0.0f, (float)st.progress / (float)st.total));
+    return n / SETUP_STEPS;
+}
+
+// The time left as it is shown: the estimate (launcher_setup.cpp) moves with every progress line, so the number
+// follows it slowly (a time constant of 5 s) and counts down with the clock in between instead of jumping.
+static long long smooth_eta(const SetupState &st, long long eta) {
+    static long long for_start = -1, last = 0;
+    static double end = 0;
+    long long now = (long long)SDL_GetTicks();
+    if (for_start != st.t_start || eta < 0) {   // another setup, or no estimate yet: start over
+        for_start = st.t_start;
+        end = eta < 0 ? 0 : (double)(now + eta);
+        last = now;
+        return eta;
+    }
+    if (end <= 0) end = (double)(now + eta);
+    else end += ((double)(now + eta) - end) * (1.0 - exp(-(double)(now - last) / 5000.0));
+    last = now;
+    return end > (double)now ? (long long)(end - (double)now) : 0;
+}
+
+// The setup's summary above its steps: what it is doing, how far along it is, the time elapsed and what is left.
+static void setup_card(const SetupState &st) {
+    float s = L.scale, lh = ImGui::GetTextLineHeight(), pad = 16 * s, gap = 10 * s, bar_h = 10 * s;
+    bool ok = !st.running && st.finished > 0;   // done: the title already says how long it took, no row of times
+    float w = ImGui::GetContentRegionAvail().x, h = pad + lh + gap + bar_h + pad + (ok ? 0 : gap + lh), rd = 6 * s;
     ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(w, h));
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), LOOK_ROW, rd);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), LOOK_LINE, rd, 0, s);
+    float x0 = p.x + pad, x1 = p.x + w - pad;
+    char clock[24], text[200];
+    long long elapsed = setup_elapsed_ms(st);
+    fmt_clock(elapsed, clock, sizeof clock);
+
+    // the title on the left, the step and the percentage on the right
+    float y = p.y + pad;
+    if (ok) snprintf(text, sizeof text, menu_text(UI_LAUNCH_DONE_IN), clock);
+    else snprintf(text, sizeof text, "%s", menu_text(UI_LAUNCH_PREPARING));
+    dl->AddText(ImVec2(x0, y), ok ? LOOK_OK : LOOK_TEXT, text);
+    float tx = ImGui::CalcTextSize(text).x;
+    char right[96], stepn[64];
+    snprintf(stepn, sizeof stepn, menu_text(UI_LAUNCH_STEP_N), ok ? SETUP_STEPS : (st.step < 0 ? 1 : st.step + 1),
+             SETUP_STEPS);
+    float f = ok ? 1.0f : setup_fraction(st);
+    snprintf(right, sizeof right, "%s   %d%%", stepn, (int)(f * 100.0f + 0.5f));
+    float rw = ImGui::CalcTextSize(right).x;
+    if (x1 - rw > x0 + tx + 24 * s) dl->AddText(ImVec2(x1 - rw, y), LOOK_HEADING, right);
+
+    // the bar of the whole setup
+    float by = y + lh + gap;
+    ImVec2 a(x0, by), b(x1, by + bar_h);
+    dl->AddRectFilled(a, b, LOOK_RAISED, bar_h * 0.5f);
+    if (f > 0 || st.running)
+        dl->AddRectFilled(a, ImVec2(a.x + fmaxf(bar_h, (b.x - a.x) * f), b.y), ok ? LOOK_OK : LOOK_ACCENT, bar_h * 0.5f);
+
+    if (ok) return;
+    // elapsed on the left, what is left on the right
+    float ty = by + bar_h + gap;
+    const char *el = menu_text(UI_LAUNCH_ELAPSED);
+    dl->AddText(ImVec2(x0, ty), LOOK_DIM, el);
+    dl->AddText(ImVec2(x0 + ImGui::CalcTextSize(el).x + 8 * s, ty), LOOK_TEXT, clock);
+    {
+        int partial = 0;
+        long long eta = smooth_eta(st, setup_eta_ms(st, &partial));
+        char left[48];
+        if (eta >= 0) {
+            fmt_clock(eta, clock, sizeof clock);
+            snprintf(left, sizeof left, "~%s%s", clock, partial ? "+" : "");
+        } else {
+            snprintf(left, sizeof left, "%s", menu_text(UI_LAUNCH_ESTIMATING));
+        }
+        const char *rem = menu_text(UI_LAUNCH_REMAINING);
+        float vw = ImGui::CalcTextSize(left).x, lw = ImGui::CalcTextSize(rem).x;
+        dl->AddText(ImVec2(x1 - vw - 8 * s - lw, ty), LOOK_DIM, rem);
+        dl->AddText(ImVec2(x1 - vw, ty), eta >= 0 ? LOOK_TEXT : LOOK_DIM, left);
+        if (partial) {   // the "+" of a first setup, which has no earlier times to count the later steps from
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fminf(ImGui::GetContentRegionAvail().x, 940 * s));
+            ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_ETA_NOTE));
+            ImGui::PopTextWrapPos();
+        }
+    }
+}
+
+// The setup's steps, one per line: its mark, its name and, for the one under way, a bar to the right edge with the
+// count after it (a band going along the bar while the step has no count yet). At the right edge, the time of each
+// step: what it took, or how long the one under way has been going.
+static void setup_progress(const SetupState &st) {
+    float s = L.scale, lh = ImGui::GetTextLineHeight(), row = lh + 14 * s, r = lh * 0.48f, ix = 10 * s;
+    float rh = row - ImGui::GetStyle().ItemSpacing.y, tw = ImGui::CalcTextSize("0:00:00").x + 16 * s;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    long long now_ms = (long long)SDL_GetTicks();
     for (int i = 0; i < SETUP_STEPS; i++) {
-        bool now = st.running && st.step == i;
+        bool now = st.running && st.step == i && !st.done[i];
         ImVec2 p = ImGui::GetCursorScreenPos();
         float avail = ImGui::GetContentRegionAvail().x, cy = p.y + row * 0.5f, ty = cy - lh * 0.5f;
-        ImGui::Dummy(ImVec2(avail, row - ImGui::GetStyle().ItemSpacing.y));
-        step_mark(dl, ImVec2(p.x + r, cy), r, st.done[i] != 0, now);
+        ImGui::Dummy(ImVec2(avail, rh));
+        if (now) dl->AddRectFilled(p, ImVec2(p.x + avail, p.y + rh), LOOK_ROW, 6 * s);
+        float left = p.x + ix, right = p.x + avail - ix;
+        step_mark(dl, ImVec2(left + r, cy), r, st.done[i] != 0, now);
         const char *name = menu_text(kStepText[i]);
-        float x = p.x + r * 2 + 14 * s;
+        float x = left + r * 2 + 14 * s;
         dl->AddText(ImVec2(x, ty), st.done[i] || now ? LOOK_TEXT : LOOK_DIM, name);
         x += ImGui::CalcTextSize(name).x + 18 * s;
+        char clock[24] = "";
+        if (now) fmt_clock(now_ms - st.step_t0, clock, sizeof clock);
+        else if (st.done[i] == 1 && st.step_ms[i] > 0) fmt_clock(st.step_ms[i], clock, sizeof clock);
+        if (clock[0]) dl->AddText(ImVec2(right - ImGui::CalcTextSize(clock).x, ty), now ? LOOK_HEADING : LOOK_DIM, clock);
         if (st.done[i] == 2) dl->AddText(ImVec2(x, ty), LOOK_DIM, menu_text(UI_LAUNCH_STEP_KEPT));
         if (!now) continue;
         char count[48] = "";
         if (st.total > 0) snprintf(count, sizeof count, "%ld / %ld", st.progress, st.total);
-        float cw = count[0] ? ImGui::CalcTextSize(count).x + 16 * s : 0, right = p.x + avail;
-        ImVec2 a(x, cy - 5 * s), b(right - cw, cy + 5 * s);
+        float cw = count[0] ? ImGui::CalcTextSize(count).x + 16 * s : 0, edge = right - tw;
+        ImVec2 a(x, cy - 5 * s), b(edge - cw, cy + 5 * s);
         if (b.x - a.x < 60 * s) continue;   // a narrow window: the name alone
         dl->AddRectFilled(a, b, LOOK_RAISED, 5 * s);
         if (st.total > 0) {
             float f = fminf(1.0f, fmaxf(0.0f, (float)st.progress / (float)st.total));
             dl->AddRectFilled(a, ImVec2(a.x + fmaxf(10 * s, (b.x - a.x) * f), b.y), LOOK_ACCENT, 5 * s);
-            dl->AddText(ImVec2(right - cw + 16 * s, ty), LOOK_HEADING, count);
+            dl->AddText(ImVec2(edge - cw + 16 * s, ty), LOOK_HEADING, count);
         } else {
             float span = b.x - a.x, band = span * 0.28f;
             float x0 = a.x + (span + band) * (float)fmod(ImGui::GetTime() * 0.7, 1.0) - band;
@@ -503,6 +614,7 @@ static void page_files(float w, float h) {
     ImGui::BeginChild("##files_body", ImVec2(0, -bottom), ImGuiChildFlags_NavFlattened);
     bool ready = rt_game_present();
     SetupState st = setup_state();
+    const bool busy = L.tools && st.running;   // the setup under way: its progress is the page, the options wait
     state_line(ready, menu_text(ready ? UI_LAUNCH_FILES_READY : UI_LAUNCH_FILES_MISSING));
     update_row(ImGui::GetContentRegionAvail().x * 0.5f);   // a folder not set up starts on this page
     if (L.updated[0]) {
@@ -510,11 +622,13 @@ static void page_files(float w, float h) {
         snprintf(note, sizeof note, menu_text(UI_LAUNCH_UPDATED), L.updated);
         ImGui::TextColored(col4(LOOK_OK), "%s", note);
     }
-    // a line of some 75 letters at most: wider, the eye loses its place on the way back
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fminf(ImGui::GetContentRegionAvail().x, 940 * L.scale));
-    ImGui::TextUnformatted(menu_text(UI_LAUNCH_FILES_HELP));
-    ImGui::PopTextWrapPos();
-    ImGui::Spacing();
+    if (!busy) {
+        // a line of some 75 letters at most: wider, the eye loses its place on the way back
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fminf(ImGui::GetContentRegionAvail().x, 940 * L.scale));
+        ImGui::TextUnformatted(menu_text(UI_LAUNCH_FILES_HELP));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    }
     ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_FILES_FOLDER));
     ImGui::SameLine();
     ImGui::TextUnformatted(L.exe_dir);
@@ -525,43 +639,41 @@ static void page_files(float w, float h) {
     if (!L.tools) {
         ImGui::TextWrapped("%s", menu_text(UI_LAUNCH_NO_TOOLS));
     } else {
-        ImGui::BeginDisabled(st.running);
-        ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_SOURCE));
-        ImGui::SameLine();
-        ImGui::TextUnformatted(L.source[0] ? L.source : "-");
-        if (ImGui::Button(menu_text(UI_LAUNCH_PICK), ImVec2(0, act_h)))
-            SDL_ShowOpenFolderDialog(picked, nullptr, L.win, nullptr, false);
-        ImGui::SameLine();
-        static const SDL_DialogFileFilter kPack[] = {{"Switch 2 package (.nup, .nx)", "nup;nx"}};
-        if (ImGui::Button(menu_text(UI_LAUNCH_PICK_NUP), ImVec2(0, act_h)))   // the dump as one file (runtime/sdk/fs/pack.h)
-            SDL_ShowOpenFileDialog(picked, nullptr, L.win, kPack, 1, nullptr, false);
-        ImGui::Dummy(ImVec2(0, 8 * L.scale));
-        ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_ROMFS_MODE));
-        // a ring with a red dot in the chosen one: ImGui's own is a filled disc, which reads as a blank button
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2 * L.scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(10 * L.scale, 0));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_Border, col4(LOOK_DIM));
-        ImGui::RadioButton(menu_text(UI_LAUNCH_ROMFS_COPY), &L.link_romfs, 0);
-        ImGui::SameLine(0, 28 * L.scale);
-        ImGui::RadioButton(menu_text(UI_LAUNCH_ROMFS_LINK), &L.link_romfs, 1);
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(2);
-        ImGui::BeginDisabled(!L.source[0]);
-        // the page's main action, in the blue: until the game is set up there is nothing else to do here
-        ImGui::PushStyleColor(ImGuiCol_Button, col4(LOOK_ACCENT));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(LOOK_ACCENT_HOT));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(LOOK_ACCENT_DOWN));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        if (ImGui::Button(menu_text(ready ? UI_LAUNCH_SETUP_AGAIN : UI_LAUNCH_SETUP), ImVec2(0, act_h)))
-            setup_start(L.exe_dir, L.source, L.link_romfs);
-        ImGui::PopStyleColor(4);
-        ImGui::EndDisabled();
-        ImGui::EndDisabled();
-        if (st.running) {
+        if (!busy) {
+            ImGui::BeginDisabled(st.running);
+            ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_SOURCE));
             ImGui::SameLine();
-            if (ImGui::Button(menu_text(UI_LAUNCH_CANCEL), ImVec2(0, act_h))) setup_cancel();
-        }
+            ImGui::TextUnformatted(L.source[0] ? L.source : "-");
+            if (ImGui::Button(menu_text(UI_LAUNCH_PICK), ImVec2(0, act_h)))
+                SDL_ShowOpenFolderDialog(picked, nullptr, L.win, nullptr, false);
+            ImGui::SameLine();
+            static const SDL_DialogFileFilter kPack[] = {{"Switch 2 package (.nup, .nx)", "nup;nx"}};
+            if (ImGui::Button(menu_text(UI_LAUNCH_PICK_NUP), ImVec2(0, act_h)))   // the dump as one file (runtime/sdk/fs/pack.h)
+                SDL_ShowOpenFileDialog(picked, nullptr, L.win, kPack, 1, nullptr, false);
+            ImGui::Dummy(ImVec2(0, 8 * L.scale));
+            ImGui::TextDisabled("%s", menu_text(UI_LAUNCH_ROMFS_MODE));
+            // a ring with a red dot in the chosen one: ImGui's own is a filled disc, which reads as a blank button
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2 * L.scale);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(10 * L.scale, 0));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_Border, col4(LOOK_DIM));
+            ImGui::RadioButton(menu_text(UI_LAUNCH_ROMFS_COPY), &L.link_romfs, 0);
+            ImGui::SameLine(0, 28 * L.scale);
+            ImGui::RadioButton(menu_text(UI_LAUNCH_ROMFS_LINK), &L.link_romfs, 1);
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(2);
+            ImGui::BeginDisabled(!L.source[0]);
+            // the page's main action, in the blue: until the game is set up there is nothing else to do here
+            ImGui::PushStyleColor(ImGuiCol_Button, col4(LOOK_ACCENT));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(LOOK_ACCENT_HOT));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(LOOK_ACCENT_DOWN));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            if (ImGui::Button(menu_text(ready ? UI_LAUNCH_SETUP_AGAIN : UI_LAUNCH_SETUP), ImVec2(0, act_h)))
+                setup_start(L.exe_dir, L.source, L.link_romfs);
+            ImGui::PopStyleColor(4);
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+        }   // !busy
         // the result right under Set up, by the button that started it: after the step list it would be under the
         // fold of a 720-line window, and a failed setup would seem to have done nothing
         if (st.finished > 0) ImGui::TextColored(col4(LOOK_OK), "%s", menu_text(UI_LAUNCH_SETUP_DONE));
@@ -574,13 +686,21 @@ static void page_files(float w, float h) {
         }
         if (st.running || st.finished) {
             ImGui::Dummy(ImVec2(0, 12 * L.scale));
+            if (st.running || st.finished > 0) {   // a failed or cancelled setup shows its error and the steps only
+                setup_card(st);
+                ImGui::Dummy(ImVec2(0, 12 * L.scale));
+            }
             setup_progress(st);
+        }
+        if (busy) {   // the way to stop it on purpose, under what it is doing
+            ImGui::Dummy(ImVec2(0, 8 * L.scale));
+            if (ImGui::Button(menu_text(UI_LAUNCH_CANCEL), ImVec2(0, act_h))) setup_cancel();
         }
     }
     ImGui::EndChild();
     // Not set up: this page is the start screen (decided 06/11/2026), its bottom button quits; set up, it goes back.
-    // While the setup runs the button takes no input: one click would throw away minutes of work. Cancel, next to Set
-    // up, is the way to stop it on purpose.
+    // While the setup runs the button takes no input: one click would throw away minutes of work. Cancel, under the
+    // progress, is the way to stop it on purpose.
     ImGui::BeginDisabled(st.running);
     bool leave = panel_back_row(ready ? UI_LAUNCH_BACK : UI_LAUNCH_QUIT);
     ImGui::EndDisabled();
